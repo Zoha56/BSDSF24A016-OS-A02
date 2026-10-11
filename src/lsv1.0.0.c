@@ -9,12 +9,14 @@
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
+#include <sys/ioctl.h>
 
 extern int errno;
 
 void do_ls(const char *dir, int long_format);
 void show_file_info(const char *filename, const struct stat *info_p);
 void mode_to_letters(int mode, char str[]);
+void print_columnar(char **filenames, int count, int max_len);
 
 int main(int argc, char *argv[])
 {
@@ -58,12 +60,12 @@ void do_ls(const char *dir, int long_format)
         return;
     }
 
-    errno = 0;
-    while ((entry = readdir(dp)) != NULL) {
-        if (entry->d_name[0] == '.')
-            continue;
+    if (long_format) {
+        errno = 0;
+        while ((entry = readdir(dp)) != NULL) {
+            if (entry->d_name[0] == '.')
+                continue;
 
-        if (long_format) {
             char path[1024];
             snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
 
@@ -73,23 +75,109 @@ void do_ls(const char *dir, int long_format)
                 continue;
             }
             show_file_info(entry->d_name, &info);
-        } else {
-            printf("%s\n", entry->d_name);
         }
-    }
+        if (errno != 0) {
+            perror("readdir failed");
+        }
+    } else {
+        // Task 2: Gather all filenames and find maximum filename length
+        int capacity = 16;
+        int count = 0;
+        int max_len = 0;
+        char **filenames = malloc(capacity * sizeof(char *));
 
-    if (errno != 0) {
-        perror("readdir failed");
+        if (!filenames) {
+            perror("malloc failed");
+            closedir(dp);
+            return;
+        }
+
+        errno = 0;
+        while ((entry = readdir(dp)) != NULL) {
+            if (entry->d_name[0] == '.')
+                continue;
+
+            if (count >= capacity) {
+                capacity *= 2;
+                char **tmp = realloc(filenames, capacity * sizeof(char *));
+                if (!tmp) {
+                    perror("realloc failed");
+                    break;
+                }
+                filenames = tmp;
+            }
+
+            filenames[count] = strdup(entry->d_name);
+            int len = strlen(entry->d_name);
+            if (len > max_len) {
+                max_len = len;
+            }
+            count++;
+        }
+
+        if (errno != 0) {
+            perror("readdir failed");
+        }
+
+        // Tasks 3 & 4: Print gathered entries in columnar format
+        if (count > 0) {
+            print_columnar(filenames, count, max_len);
+        }
+
+        // Free allocated memory
+        for (int i = 0; i < count; i++) {
+            free(filenames[i]);
+        }
+        free(filenames);
     }
 
     closedir(dp);
+}
+
+// Task 3 & Task 4: Calculate layout and print "down then across"
+void print_columnar(char **filenames, int count, int max_len)
+{
+    struct winsize w;
+    int term_width = 80; // Default fallback width
+
+    // Programmatically retrieve terminal width via ioctl
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
+        term_width = w.ws_col;
+    }
+
+    int spacing = 2; // Space between columns
+    int col_width = max_len + spacing;
+    int num_cols = term_width / col_width;
+
+    if (num_cols < 1) {
+        num_cols = 1;
+    }
+
+    // Calculate rows required: ceil(count / num_cols)
+    int num_rows = (count + num_cols - 1) / num_cols;
+
+    // Iterate row by row
+    for (int r = 0; r < num_rows; r++) {
+        for (int c = 0; c < num_cols; c++) {
+            int idx = r + c * num_rows; // Down-then-across indexing
+            if (idx < count) {
+                // Print filename left-aligned padded to column width
+                if (c == num_cols - 1 || idx + num_rows >= count) {
+                    // Last column in row or last item does not need trailing spaces
+                    printf("%s", filenames[idx]);
+                } else {
+                    printf("%-*s", col_width, filenames[idx]);
+                }
+            }
+        }
+        printf("\n");
+    }
 }
 
 void mode_to_letters(int mode, char str[])
 {
     strcpy(str, "----------");
 
-    // File type
     if (S_ISDIR(mode))  str[0] = 'd';
     if (S_ISCHR(mode))  str[0] = 'c';
     if (S_ISBLK(mode))  str[0] = 'b';
@@ -97,7 +185,6 @@ void mode_to_letters(int mode, char str[])
     if (S_ISFIFO(mode)) str[0] = 'p';
     if (S_ISSOCK(mode)) str[0] = 's';
 
-    // Permissions
     if (mode & S_IRUSR) str[1] = 'r';
     if (mode & S_IWUSR) str[2] = 'w';
     if (mode & S_IXUSR) str[3] = 'x';
@@ -110,7 +197,6 @@ void mode_to_letters(int mode, char str[])
     if (mode & S_IWOTH) str[8] = 'w';
     if (mode & S_IXOTH) str[9] = 'x';
 
-    // Special bits
     if (mode & S_ISUID) str[3] = (mode & S_IXUSR) ? 's' : 'S';
     if (mode & S_ISGID) str[6] = (mode & S_IXGRP) ? 's' : 'S';
     if (mode & S_ISVTX) str[9] = (mode & S_IXOTH) ? 't' : 'T';
