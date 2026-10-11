@@ -14,3 +14,9 @@ Names are sorted and laid out column by column: first `rows` names go in column 
 
 **Q2. Purpose of `ioctl` and limits of a fixed 80-column fallback.**
 `ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws)` asks the terminal driver for its current size (`ws.ws_col`, `ws.ws_row`). With only a fixed 80 columns, the output would waste space on wide terminals, and on narrow terminals the lines would wrap and break the column alignment. It also would not adapt when the window is resized. The code uses 80 only if `ioctl` fails (e.g., output not a terminal).
+## Feature 4 – Horizontal Display (v1.3.0)
+**Q1. Complexity: vertical vs horizontal.**
+The vertical ("down then across") version needs more pre-calculation: number of columns, then number of rows (ceiling division), and index mapping `r + c*rows`; the layout of every item depends on the total count. The horizontal version needs only the column width and the current cursor position; each name is printed in order and a newline is emitted when the next column would overflow the terminal width.
+
+**Q2. Managing display modes.**
+A global `enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL } display_mode` is set in the `getopt()` loop (`-l` → long, `-x` → horizontal). After reading and sorting the names, `do_ls()` uses a `switch (display_mode)` to call `print_long()`, `print_horizontal()`, or `print_down_across()` (default). The recursion flag `-R` is independent and stored in a separate variable.

@@ -13,35 +13,45 @@
 
 extern int errno;
 
-void do_ls(const char *dir, int long_format);
+// Display modes state management
+#define MODE_DEFAULT    0
+#define MODE_LONG       1
+#define MODE_HORIZONTAL 2
+
+void do_ls(const char *dir, int mode);
 void show_file_info(const char *filename, const struct stat *info_p);
 void mode_to_letters(int mode, char str[]);
 void print_columnar(char **filenames, int count, int max_len);
+void print_horizontal(char **filenames, int count, int max_len);
 
 int main(int argc, char *argv[])
 {
-    int flag_l = 0;
+    int mode = MODE_DEFAULT;
     int opt;
 
-    while ((opt = getopt(argc, argv, "l")) != -1) {
+    // Task 2: Extend getopt() parsing to recognize -x flag
+    while ((opt = getopt(argc, argv, "lx")) != -1) {
         switch (opt) {
             case 'l':
-                flag_l = 1;
+                mode = MODE_LONG;
+                break;
+            case 'x':
+                mode = MODE_HORIZONTAL;
                 break;
             default:
-                fprintf(stderr, "Usage: %s [-l] [directory...]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-l] [-x] [directory...]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
     if (optind == argc) {
-        do_ls(".", flag_l);
+        do_ls(".", mode);
     } else {
         for (int i = optind; i < argc; i++) {
             if (argc - optind > 1) {
                 printf("%s:\n", argv[i]);
             }
-            do_ls(argv[i], flag_l);
+            do_ls(argv[i], mode);
             if (i < argc - 1) {
                 puts("");
             }
@@ -50,7 +60,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void do_ls(const char *dir, int long_format)
+void do_ls(const char *dir, int mode)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
@@ -60,7 +70,8 @@ void do_ls(const char *dir, int long_format)
         return;
     }
 
-    if (long_format) {
+    // Task 4: Integrate display modes
+    if (mode == MODE_LONG) {
         errno = 0;
         while ((entry = readdir(dp)) != NULL) {
             if (entry->d_name[0] == '.')
@@ -80,7 +91,7 @@ void do_ls(const char *dir, int long_format)
             perror("readdir failed");
         }
     } else {
-        // Task 2: Gather all filenames and find maximum filename length
+        // Read entries into dynamic array
         int capacity = 16;
         int count = 0;
         int max_len = 0;
@@ -119,12 +130,15 @@ void do_ls(const char *dir, int long_format)
             perror("readdir failed");
         }
 
-        // Tasks 3 & 4: Print gathered entries in columnar format
+        // Route to requested display function
         if (count > 0) {
-            print_columnar(filenames, count, max_len);
+            if (mode == MODE_HORIZONTAL) {
+                print_horizontal(filenames, count, max_len);
+            } else {
+                print_columnar(filenames, count, max_len);
+            }
         }
 
-        // Free allocated memory
         for (int i = 0; i < count; i++) {
             free(filenames[i]);
         }
@@ -134,18 +148,17 @@ void do_ls(const char *dir, int long_format)
     closedir(dp);
 }
 
-// Task 3 & Task 4: Calculate layout and print "down then across"
-void print_columnar(char **filenames, int count, int max_len)
+// Task 3: Horizontal Display Logic (Across)
+void print_horizontal(char **filenames, int count, int max_len)
 {
     struct winsize w;
-    int term_width = 80; // Default fallback width
+    int term_width = 80;
 
-    // Programmatically retrieve terminal width via ioctl
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
         term_width = w.ws_col;
     }
 
-    int spacing = 2; // Space between columns
+    int spacing = 2;
     int col_width = max_len + spacing;
     int num_cols = term_width / col_width;
 
@@ -153,17 +166,48 @@ void print_columnar(char **filenames, int count, int max_len)
         num_cols = 1;
     }
 
-    // Calculate rows required: ceil(count / num_cols)
+    int current_col = 0;
+    for (int i = 0; i < count; i++) {
+        // Print file entry padded to column width
+        if (current_col == num_cols - 1 || i == count - 1) {
+            printf("%s\n", filenames[i]);
+            current_col = 0;
+        } else {
+            printf("%-*s", col_width, filenames[i]);
+            current_col++;
+        }
+    }
+
+    if (current_col != 0) {
+        printf("\n");
+    }
+}
+
+// Default Columnar Display Logic (Down Then Across)
+void print_columnar(char **filenames, int count, int max_len)
+{
+    struct winsize w;
+    int term_width = 80;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
+        term_width = w.ws_col;
+    }
+
+    int spacing = 2;
+    int col_width = max_len + spacing;
+    int num_cols = term_width / col_width;
+
+    if (num_cols < 1) {
+        num_cols = 1;
+    }
+
     int num_rows = (count + num_cols - 1) / num_cols;
 
-    // Iterate row by row
     for (int r = 0; r < num_rows; r++) {
         for (int c = 0; c < num_cols; c++) {
-            int idx = r + c * num_rows; // Down-then-across indexing
+            int idx = r + c * num_rows;
             if (idx < count) {
-                // Print filename left-aligned padded to column width
                 if (c == num_cols - 1 || idx + num_rows >= count) {
-                    // Last column in row or last item does not need trailing spaces
                     printf("%s", filenames[idx]);
                 } else {
                     printf("%-*s", col_width, filenames[idx]);
