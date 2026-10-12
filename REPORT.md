@@ -36,3 +36,22 @@ A global `enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL } display_mode` is set
   - Returns `0` if elements are equal.
   - Returns `> 0` if element `a` should come after `b`.
 - **Why `const void *` Arguments are Required:** `qsort()` operates on generic memory blocks. Passing generic `const void *` pointers allows `qsort()` to remain type-agnostic and work with any arbitrary data structure. Inside the callback, the pointers are cast to `const char **` and dereferenced to retrieve the underlying string addresses passed to `strcmp()`.
+## Feature 6 – Colorized Output Based on File Type (`v1.5.0`)
+
+### Q1. ANSI Escape Codes Mechanics
+- **Mechanism:** ANSI escape sequences are control character strings starting with `\033[` (Escape) followed by parameters and ending in `m` (Select Graphic Rendition). Terminal emulators process these control sequences to alter text color/attributes rather than displaying the raw characters.
+- **Reset Sequence:** `\033[0m` resets terminal attributes to default to avoid bleeding color into subsequent output.
+- **Green Code Sequence:** `\033[0;32m` (Standard Green) or `\033[1;32m` (Bold Green).
+
+### Q2. File Type & Executable Bit Evaluation
+- **Permission Bit Inspection:** Executable status is checked via bitwise AND against permission mask constants defined in `<sys/stat.h>`:
+  - `S_IXUSR` (Owner execute bit)
+  - `S_IXGRP` (Group execute bit)
+  - `S_IXOTH` (Others execute bit)
+- **Evaluation Logic:** `if (st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))` evaluates to true if any execution permission bit is set.
+- **File Type Rules:**
+  - **Directory:** `S_ISDIR(st_mode)` $\rightarrow$ **Blue** (`\033[1;34m`)
+  - **Executable:** `st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)` $\rightarrow$ **Green** (`\033[1;32m`)
+  - **Archive/Tarball:** `.tar`, `.gz`, `.zip`, `.tgz` filename extension matching $\rightarrow$ **Red** (`\033[1;31m`)
+  - **Symbolic Link:** `S_ISLNK(st_mode)` (via `lstat`) $\rightarrow$ **Pink/Magenta** (`\033[1;35m`)
+  - **Special Files:** Character/Block devices, FIFO, Sockets $\rightarrow$ **Reverse Video** (`\033[7m`)

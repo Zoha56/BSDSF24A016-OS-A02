@@ -18,12 +18,21 @@ extern int errno;
 #define MODE_LONG       1
 #define MODE_HORIZONTAL 2
 
+// Task 2: ANSI Escape Codes for File Types
+#define COLOR_RESET   "\033[0m"
+#define COLOR_DIR     "\033[1;34m" // Blue (Bold)
+#define COLOR_EXEC    "\033[1;32m" // Green (Bold)
+#define COLOR_ARCHIVE "\033[1;31m" // Red (Bold)
+#define COLOR_SYMLINK "\033[1;35m" // Pink / Magenta (Bold)
+#define COLOR_SPECIAL "\033[7m"    // Reverse Video
+
 void do_ls(const char *dir, int mode);
-void show_file_info(const char *filename, const struct stat *info_p);
+void show_file_info(const char *dir, const char *filename);
 void mode_to_letters(int mode, char str[]);
-void print_columnar(char **filenames, int count, int max_len);
-void print_horizontal(char **filenames, int count, int max_len);
+void print_columnar(const char *dir, char **filenames, int count, int max_len);
+void print_horizontal(const char *dir, char **filenames, int count, int max_len);
 int compare_strings(const void *a, const void *b);
+void print_colored_filename(const char *dir, const char *filename, int padding);
 
 int main(int argc, char *argv[])
 {
@@ -60,14 +69,62 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-// Task 2: Comparison function for qsort
 int compare_strings(const void *a, const void *b)
 {
-    // qsort passes pointers to elements. Since array elements are char*,
-    // 'a' and 'b' are char**. We cast and dereference to get char*.
     const char *str1 = *(const char **)a;
     const char *str2 = *(const char **)b;
     return strcmp(str1, str2);
+}
+
+// Task 3 & 4: Colorized filename output based on st_mode and filename
+void print_colored_filename(const char *dir, const char *filename, int padding)
+{
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s", dir, filename);
+
+    struct stat info;
+    // Use lstat so symlinks are correctly detected
+    if (lstat(path, &info) == -1) {
+        if (padding > 0)
+            printf("%-*s", padding, filename);
+        else
+            printf("%s", filename);
+        return;
+    }
+
+    const char *color = COLOR_RESET;
+
+    // Check file extension for archives (.tar, .gz, .zip, .tgz)
+    int len = strlen(filename);
+    int is_archive = 0;
+    if ((len > 4 && strcmp(filename + len - 4, ".tar") == 0) ||
+        (len > 3 && strcmp(filename + len - 3, ".gz") == 0)  ||
+        (len > 4 && strcmp(filename + len - 4, ".zip") == 0) ||
+        (len > 4 && strcmp(filename + len - 4, ".tgz") == 0)) {
+        is_archive = 1;
+    }
+
+    if (S_ISLNK(info.st_mode)) {
+        color = COLOR_SYMLINK;   // Pink / Magenta
+    } else if (S_ISDIR(info.st_mode)) {
+        color = COLOR_DIR;       // Blue
+    } else if (is_archive) {
+        color = COLOR_ARCHIVE;   // Red
+    } else if (info.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) {
+        color = COLOR_EXEC;      // Green
+    } else if (S_ISCHR(info.st_mode) || S_ISBLK(info.st_mode) ||
+               S_ISFIFO(info.st_mode) || S_ISSOCK(info.st_mode)) {
+        color = COLOR_SPECIAL;   // Reverse Video
+    }
+
+    // Print filename wrapped with ANSI color codes
+    if (padding > 0) {
+        int spaces = padding - (int)strlen(filename);
+        if (spaces < 0) spaces = 0;
+        printf("%s%s%s%*s", color, filename, COLOR_RESET, spaces, "");
+    } else {
+        printf("%s%s%s", color, filename, COLOR_RESET);
+    }
 }
 
 void do_ls(const char *dir, int mode)
@@ -119,38 +176,27 @@ void do_ls(const char *dir, int mode)
     }
     closedir(dp);
 
-    // Task 2: Sort entries alphabetically using qsort
     if (count > 0) {
         qsort(filenames, count, sizeof(char *), compare_strings);
 
-        // Task 3: Render pre-sorted entries based on mode
         if (mode == MODE_LONG) {
             for (int i = 0; i < count; i++) {
-                char path[1024];
-                snprintf(path, sizeof(path), "%s/%s", dir, filenames[i]);
-
-                struct stat info;
-                if (lstat(path, &info) == -1) {
-                    perror("lstat failed");
-                    continue;
-                }
-                show_file_info(filenames[i], &info);
+                show_file_info(dir, filenames[i]);
             }
         } else if (mode == MODE_HORIZONTAL) {
-            print_horizontal(filenames, count, max_len);
+            print_horizontal(dir, filenames, count, max_len);
         } else {
-            print_columnar(filenames, count, max_len);
+            print_columnar(dir, filenames, count, max_len);
         }
     }
 
-    // Memory Cleanup
     for (int i = 0; i < count; i++) {
         free(filenames[i]);
     }
     free(filenames);
 }
 
-void print_horizontal(char **filenames, int count, int max_len)
+void print_horizontal(const char *dir, char **filenames, int count, int max_len)
 {
     struct winsize w;
     int term_width = 80;
@@ -170,10 +216,11 @@ void print_horizontal(char **filenames, int count, int max_len)
     int current_col = 0;
     for (int i = 0; i < count; i++) {
         if (current_col == num_cols - 1 || i == count - 1) {
-            printf("%s\n", filenames[i]);
+            print_colored_filename(dir, filenames[i], 0);
+            printf("\n");
             current_col = 0;
         } else {
-            printf("%-*s", col_width, filenames[i]);
+            print_colored_filename(dir, filenames[i], col_width);
             current_col++;
         }
     }
@@ -183,7 +230,7 @@ void print_horizontal(char **filenames, int count, int max_len)
     }
 }
 
-void print_columnar(char **filenames, int count, int max_len)
+void print_columnar(const char *dir, char **filenames, int count, int max_len)
 {
     struct winsize w;
     int term_width = 80;
@@ -207,9 +254,9 @@ void print_columnar(char **filenames, int count, int max_len)
             int idx = r + c * num_rows;
             if (idx < count) {
                 if (c == num_cols - 1 || idx + num_rows >= count) {
-                    printf("%s", filenames[idx]);
+                    print_colored_filename(dir, filenames[idx], 0);
                 } else {
-                    printf("%-*s", col_width, filenames[idx]);
+                    print_colored_filename(dir, filenames[idx], col_width);
                 }
             }
         }
@@ -245,27 +292,38 @@ void mode_to_letters(int mode, char str[])
     if (mode & S_ISVTX) str[9] = (mode & S_IXOTH) ? 't' : 'T';
 }
 
-void show_file_info(const char *filename, const struct stat *info_p)
+void show_file_info(const char *dir, const char *filename)
 {
-    char modestr[11];
-    mode_to_letters(info_p->st_mode, modestr);
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s", dir, filename);
 
-    struct passwd *pw = getpwuid(info_p->st_uid);
+    struct stat info;
+    if (lstat(path, &info) == -1) {
+        perror("lstat failed");
+        return;
+    }
+
+    char modestr[11];
+    mode_to_letters(info.st_mode, modestr);
+
+    struct passwd *pw = getpwuid(info.st_uid);
     char *user_name = pw ? pw->pw_name : "UNKNOWN";
 
-    struct group *grp = getgrgid(info_p->st_gid);
+    struct group *grp = getgrgid(info.st_gid);
     char *group_name = grp ? grp->gr_name : "UNKNOWN";
 
     char datestr[100];
-    strncpy(datestr, ctime(&info_p->st_mtime) + 4, 12);
+    strncpy(datestr, ctime(&info.st_mtime) + 4, 12);
     datestr[12] = '\0';
 
-    printf("%s %2ld %-8s %-8s %8ld %s %s\n",
+    printf("%s %2ld %-8s %-8s %8ld %s ",
            modestr,
-           (long)info_p->st_nlink,
+           (long)info.st_nlink,
            user_name,
            group_name,
-           (long)info_p->st_size,
-           datestr,
-           filename);
+           (long)info.st_size,
+           datestr);
+
+    print_colored_filename(dir, filename, 0);
+    printf("\n");
 }
