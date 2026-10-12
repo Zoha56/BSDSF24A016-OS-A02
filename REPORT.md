@@ -20,3 +20,19 @@ The vertical ("down then across") version needs more pre-calculation: number of 
 
 **Q2. Managing display modes.**
 A global `enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL } display_mode` is set in the `getopt()` loop (`-l` → long, `-x` → horizontal). After reading and sorting the names, `do_ls()` uses a `switch (display_mode)` to call `print_long()`, `print_horizontal()`, or `print_down_across()` (default). The recursion flag `-R` is independent and stored in a separate variable.
+
+## Feature 5 – Alphabetical Sort (v1.4.0)
+
+### Q1. Necessity of reading all directory entries into memory before sorting and drawbacks
+- **Necessity:** Directory streams read via `opendir()`/`readdir()` return entries in the arbitrary order in which they are stored in the filesystem's directory data structures (e.g., inode tables or extents), which is not sorted. Because sorting algorithms require global knowledge of all elements to establish comparative order, the program must collect all entry names into memory before it can sort them and calculate row/column layouts.
+- **Drawbacks for Millions of Files:**
+  1. **High Memory Overhead:** Allocating memory for millions of filename strings (alongside pointer arrays) can consume gigabytes of RAM, risking Out-Of-Memory (OOM) process termination.
+  2. **Latency & I/O Delay:** Reading all directory records up front creates noticeable execution lag before any output is displayed to the screen, degrading user responsiveness.
+
+### Q2. Purpose and signature of the qsort() comparison function
+- **Function Signature:** `int compare_strings(const void *a, const void *b)`
+- **Purpose:** `qsort()` is generic and does not know the data type of the elements in the array. The comparison function tells `qsort()` how to evaluate the order of two elements:
+  - Returns `< 0` if element `a` should come before `b`.
+  - Returns `0` if elements are equal.
+  - Returns `> 0` if element `a` should come after `b`.
+- **Why `const void *` Arguments are Required:** `qsort()` operates on generic memory blocks. Passing generic `const void *` pointers allows `qsort()` to remain type-agnostic and work with any arbitrary data structure. Inside the callback, the pointers are cast to `const char **` and dereferenced to retrieve the underlying string addresses passed to `strcmp()`.

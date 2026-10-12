@@ -23,13 +23,13 @@ void show_file_info(const char *filename, const struct stat *info_p);
 void mode_to_letters(int mode, char str[]);
 void print_columnar(char **filenames, int count, int max_len);
 void print_horizontal(char **filenames, int count, int max_len);
+int compare_strings(const void *a, const void *b);
 
 int main(int argc, char *argv[])
 {
     int mode = MODE_DEFAULT;
     int opt;
 
-    // Task 2: Extend getopt() parsing to recognize -x flag
     while ((opt = getopt(argc, argv, "lx")) != -1) {
         switch (opt) {
             case 'l':
@@ -60,6 +60,16 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+// Task 2: Comparison function for qsort
+int compare_strings(const void *a, const void *b)
+{
+    // qsort passes pointers to elements. Since array elements are char*,
+    // 'a' and 'b' are char**. We cast and dereference to get char*.
+    const char *str1 = *(const char **)a;
+    const char *str2 = *(const char **)b;
+    return strcmp(str1, str2);
+}
+
 void do_ls(const char *dir, int mode)
 {
     struct dirent *entry;
@@ -70,85 +80,76 @@ void do_ls(const char *dir, int mode)
         return;
     }
 
-    // Task 4: Integrate display modes
-    if (mode == MODE_LONG) {
-        errno = 0;
-        while ((entry = readdir(dp)) != NULL) {
-            if (entry->d_name[0] == '.')
-                continue;
+    int capacity = 16;
+    int count = 0;
+    int max_len = 0;
+    char **filenames = malloc(capacity * sizeof(char *));
 
-            char path[1024];
-            snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
-
-            struct stat info;
-            if (lstat(path, &info) == -1) {
-                perror("lstat failed");
-                continue;
-            }
-            show_file_info(entry->d_name, &info);
-        }
-        if (errno != 0) {
-            perror("readdir failed");
-        }
-    } else {
-        // Read entries into dynamic array
-        int capacity = 16;
-        int count = 0;
-        int max_len = 0;
-        char **filenames = malloc(capacity * sizeof(char *));
-
-        if (!filenames) {
-            perror("malloc failed");
-            closedir(dp);
-            return;
-        }
-
-        errno = 0;
-        while ((entry = readdir(dp)) != NULL) {
-            if (entry->d_name[0] == '.')
-                continue;
-
-            if (count >= capacity) {
-                capacity *= 2;
-                char **tmp = realloc(filenames, capacity * sizeof(char *));
-                if (!tmp) {
-                    perror("realloc failed");
-                    break;
-                }
-                filenames = tmp;
-            }
-
-            filenames[count] = strdup(entry->d_name);
-            int len = strlen(entry->d_name);
-            if (len > max_len) {
-                max_len = len;
-            }
-            count++;
-        }
-
-        if (errno != 0) {
-            perror("readdir failed");
-        }
-
-        // Route to requested display function
-        if (count > 0) {
-            if (mode == MODE_HORIZONTAL) {
-                print_horizontal(filenames, count, max_len);
-            } else {
-                print_columnar(filenames, count, max_len);
-            }
-        }
-
-        for (int i = 0; i < count; i++) {
-            free(filenames[i]);
-        }
-        free(filenames);
+    if (!filenames) {
+        perror("malloc failed");
+        closedir(dp);
+        return;
     }
 
+    errno = 0;
+    while ((entry = readdir(dp)) != NULL) {
+        if (entry->d_name[0] == '.')
+            continue;
+
+        if (count >= capacity) {
+            capacity *= 2;
+            char **tmp = realloc(filenames, capacity * sizeof(char *));
+            if (!tmp) {
+                perror("realloc failed");
+                break;
+            }
+            filenames = tmp;
+        }
+
+        filenames[count] = strdup(entry->d_name);
+        int len = strlen(entry->d_name);
+        if (len > max_len) {
+            max_len = len;
+        }
+        count++;
+    }
+
+    if (errno != 0) {
+        perror("readdir failed");
+    }
     closedir(dp);
+
+    // Task 2: Sort entries alphabetically using qsort
+    if (count > 0) {
+        qsort(filenames, count, sizeof(char *), compare_strings);
+
+        // Task 3: Render pre-sorted entries based on mode
+        if (mode == MODE_LONG) {
+            for (int i = 0; i < count; i++) {
+                char path[1024];
+                snprintf(path, sizeof(path), "%s/%s", dir, filenames[i]);
+
+                struct stat info;
+                if (lstat(path, &info) == -1) {
+                    perror("lstat failed");
+                    continue;
+                }
+                show_file_info(filenames[i], &info);
+            }
+        } else if (mode == MODE_HORIZONTAL) {
+            print_horizontal(filenames, count, max_len);
+        } else {
+            print_columnar(filenames, count, max_len);
+        }
+    }
+
+    // Memory Cleanup
+    for (int i = 0; i < count; i++) {
+        free(filenames[i]);
+    }
+    free(filenames);
 }
 
-// Task 3: Horizontal Display Logic (Across)
 void print_horizontal(char **filenames, int count, int max_len)
 {
     struct winsize w;
@@ -168,7 +169,6 @@ void print_horizontal(char **filenames, int count, int max_len)
 
     int current_col = 0;
     for (int i = 0; i < count; i++) {
-        // Print file entry padded to column width
         if (current_col == num_cols - 1 || i == count - 1) {
             printf("%s\n", filenames[i]);
             current_col = 0;
@@ -183,7 +183,6 @@ void print_horizontal(char **filenames, int count, int max_len)
     }
 }
 
-// Default Columnar Display Logic (Down Then Across)
 void print_columnar(char **filenames, int count, int max_len)
 {
     struct winsize w;
