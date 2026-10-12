@@ -18,7 +18,7 @@ extern int errno;
 #define MODE_LONG       1
 #define MODE_HORIZONTAL 2
 
-// Task 2: ANSI Escape Codes for File Types
+// ANSI Escape Codes for File Types
 #define COLOR_RESET   "\033[0m"
 #define COLOR_DIR     "\033[1;34m" // Blue (Bold)
 #define COLOR_EXEC    "\033[1;32m" // Green (Bold)
@@ -26,7 +26,7 @@ extern int errno;
 #define COLOR_SYMLINK "\033[1;35m" // Pink / Magenta (Bold)
 #define COLOR_SPECIAL "\033[7m"    // Reverse Video
 
-void do_ls(const char *dir, int mode);
+void do_ls(const char *dir, int mode, int recursive, int is_first_dir);
 void show_file_info(const char *dir, const char *filename);
 void mode_to_letters(int mode, char str[]);
 void print_columnar(const char *dir, char **filenames, int count, int max_len);
@@ -37,9 +37,11 @@ void print_colored_filename(const char *dir, const char *filename, int padding);
 int main(int argc, char *argv[])
 {
     int mode = MODE_DEFAULT;
+    int recursive = 0;
     int opt;
 
-    while ((opt = getopt(argc, argv, "lx")) != -1) {
+    // Task 2: Extend getopt() for -R flag
+    while ((opt = getopt(argc, argv, "lxR")) != -1) {
         switch (opt) {
             case 'l':
                 mode = MODE_LONG;
@@ -47,23 +49,24 @@ int main(int argc, char *argv[])
             case 'x':
                 mode = MODE_HORIZONTAL;
                 break;
+            case 'R':
+                recursive = 1;
+                break;
             default:
-                fprintf(stderr, "Usage: %s [-l] [-x] [directory...]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-l] [-x] [-R] [directory...]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
     if (optind == argc) {
-        do_ls(".", mode);
+        do_ls(".", mode, recursive, 1);
     } else {
         for (int i = optind; i < argc; i++) {
-            if (argc - optind > 1) {
-                printf("%s:\n", argv[i]);
-            }
-            do_ls(argv[i], mode);
-            if (i < argc - 1) {
+            int is_first = (i == optind) ? 1 : 0;
+            if (!is_first) {
                 puts("");
             }
+            do_ls(argv[i], mode, recursive, is_first);
         }
     }
     return 0;
@@ -76,14 +79,12 @@ int compare_strings(const void *a, const void *b)
     return strcmp(str1, str2);
 }
 
-// Task 3 & 4: Colorized filename output based on st_mode and filename
 void print_colored_filename(const char *dir, const char *filename, int padding)
 {
     char path[1024];
     snprintf(path, sizeof(path), "%s/%s", dir, filename);
 
     struct stat info;
-    // Use lstat so symlinks are correctly detected
     if (lstat(path, &info) == -1) {
         if (padding > 0)
             printf("%-*s", padding, filename);
@@ -94,7 +95,6 @@ void print_colored_filename(const char *dir, const char *filename, int padding)
 
     const char *color = COLOR_RESET;
 
-    // Check file extension for archives (.tar, .gz, .zip, .tgz)
     int len = strlen(filename);
     int is_archive = 0;
     if ((len > 4 && strcmp(filename + len - 4, ".tar") == 0) ||
@@ -105,19 +105,18 @@ void print_colored_filename(const char *dir, const char *filename, int padding)
     }
 
     if (S_ISLNK(info.st_mode)) {
-        color = COLOR_SYMLINK;   // Pink / Magenta
+        color = COLOR_SYMLINK;
     } else if (S_ISDIR(info.st_mode)) {
-        color = COLOR_DIR;       // Blue
+        color = COLOR_DIR;
     } else if (is_archive) {
-        color = COLOR_ARCHIVE;   // Red
+        color = COLOR_ARCHIVE;
     } else if (info.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) {
-        color = COLOR_EXEC;      // Green
+        color = COLOR_EXEC;
     } else if (S_ISCHR(info.st_mode) || S_ISBLK(info.st_mode) ||
                S_ISFIFO(info.st_mode) || S_ISSOCK(info.st_mode)) {
-        color = COLOR_SPECIAL;   // Reverse Video
+        color = COLOR_SPECIAL;
     }
 
-    // Print filename wrapped with ANSI color codes
     if (padding > 0) {
         int spaces = padding - (int)strlen(filename);
         if (spaces < 0) spaces = 0;
@@ -127,7 +126,8 @@ void print_colored_filename(const char *dir, const char *filename, int padding)
     }
 }
 
-void do_ls(const char *dir, int mode)
+// Task 3: Recursive do_ls implementation
+void do_ls(const char *dir, int mode, int recursive, int is_first_dir)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
@@ -135,6 +135,11 @@ void do_ls(const char *dir, int mode)
     if (dp == NULL) {
         fprintf(stderr, "Cannot open directory: %s\n", dir);
         return;
+    }
+
+    // Print header if recursive or multi-directory
+    if (recursive || !is_first_dir) {
+        printf("%s:\n", dir);
     }
 
     int capacity = 16;
@@ -179,6 +184,7 @@ void do_ls(const char *dir, int mode)
     if (count > 0) {
         qsort(filenames, count, sizeof(char *), compare_strings);
 
+        // Render current directory contents
         if (mode == MODE_LONG) {
             for (int i = 0; i < count; i++) {
                 show_file_info(dir, filenames[i]);
@@ -187,6 +193,25 @@ void do_ls(const char *dir, int mode)
             print_horizontal(dir, filenames, count, max_len);
         } else {
             print_columnar(dir, filenames, count, max_len);
+        }
+
+        // Phase 2: Handle recursion (-R)
+        if (recursive) {
+            for (int i = 0; i < count; i++) {
+                char path[1024];
+                snprintf(path, sizeof(path), "%s/%s", dir, filenames[i]);
+
+                struct stat info;
+                if (lstat(path, &info) == -1) {
+                    continue;
+                }
+
+                // Recurse into directory if not symlink, . or ..
+                if (S_ISDIR(info.st_mode) && !S_ISLNK(info.st_mode)) {
+                    puts("");
+                    do_ls(path, mode, recursive, 0);
+                }
+            }
         }
     }
 

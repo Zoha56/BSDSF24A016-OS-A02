@@ -55,3 +55,13 @@ A global `enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL } display_mode` is set
   - **Archive/Tarball:** `.tar`, `.gz`, `.zip`, `.tgz` filename extension matching $\rightarrow$ **Red** (`\033[1;31m`)
   - **Symbolic Link:** `S_ISLNK(st_mode)` (via `lstat`) $\rightarrow$ **Pink/Magenta** (`\033[1;35m`)
   - **Special Files:** Character/Block devices, FIFO, Sockets $\rightarrow$ **Reverse Video** (`\033[7m`)
+
+## Feature 7 – Recursive Listing (-R Option) (v1.6.0)
+
+### Q1. Base Case in Recursive Functions and in `ls -R`
+- **General Definition:** In recursion, the base case is the terminating condition that stops a function from making further recursive calls to itself, preventing infinite call stack growth and stack overflow errors.
+- **`ls -R` Base Case:** The base case occurs when a directory contains no subdirectories (or contains only files, symbolic links, or unreadable entries). Once `do_ls()` iterates through all entries in a directory and finds no child entries satisfying `S_ISDIR(info.st_mode)`, no further recursive `do_ls()` calls are triggered. The function completes execution and pops off the call stack. Skipping `.` and `..` prevents infinite self-referential recursion.
+
+### Q2. Necessity of Constructing Full Relative Paths
+- **Necessity:** `opendir()`, `lstat()`, and `stat()` operate relative to the process's Current Working Directory (CWD). Calling `do_ls("subdir")` from inside `do_ls("parent_dir")` fails because the working directory of the process remains set to the root execution directory.
+- **What Happens Without Full Pathing:** If `do_ls("subdir")` is called without path prefixing, `opendir("subdir")` attempts to open `./subdir` instead of `./parent_dir/subdir`. This causes `ENOENT` ("No such file or directory") errors for nested directories. Building full paths (`parent_dir/subdir`) ensures system calls resolve correct relative paths without altering global process working directory state via `chdir()`.
